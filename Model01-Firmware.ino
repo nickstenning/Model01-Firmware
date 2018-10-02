@@ -16,6 +16,13 @@
 // The Kaleidoscope core
 #include "Kaleidoscope.h"
 
+// Support for storing the keymap in EEPROM
+#include "Kaleidoscope-EEPROM-Settings.h"
+#include "Kaleidoscope-EEPROM-Keymap.h"
+
+// Support for communicating with the host via a simple Serial protocol
+#include "Kaleidoscope-Focus.h"
+
 // Support for keys that move the mouse
 #include "Kaleidoscope-MouseKeys.h"
 
@@ -396,6 +403,15 @@ USE_MAGIC_COMBOS({.action = toggleKeyboardProtocol,
 // The order can be important. For example, LED effects are
 // added in the order they're listed here.
 KALEIDOSCOPE_INIT_PLUGINS(
+  // The EEPROMSettings & EEPROMKeymap plugins make it possible to have an
+  // editable keymap in EEPROM.
+  EEPROMSettings,
+  EEPROMKeymap,
+
+  // Focus allows bi-directional communication with the host, and is the
+  // interface through which the keymap in EEPROM can be edited.
+  Focus,
+
   // The boot greeting effect pulses the LED button for 10 seconds after the keyboard is first connected
   BootGreetingEffect,
 
@@ -467,6 +483,10 @@ void setup() {
   // First, call Kaleidoscope's internal setup function
   Kaleidoscope.setup();
 
+  // Setup the virtual serial port, so that the host and the firmware can
+  // communicate over it
+  Serial.begin(9600);
+
   // While we hope to improve this in the future, the NumPad plugin
   // needs to be explicitly told which keymap layer is your numpad layer
   NumPad.numPadLayer = NUMPAD;
@@ -488,6 +508,40 @@ void setup() {
   // This avoids over-taxing devices that don't have a lot of power to share
   // with USB devices
   LEDOff.activate();
+
+  // To make the keymap editable without flashing new firmware, we store an
+  // overlay in EEPROM. For this to work, we need two things:
+
+  // We need to tell the firmware that keys should be looked up in EEPROM first,
+  // but transparent keys should fall back to the hard-coded keymap. With this
+  // arrangement, the firmware will use the built-in keymap by default, but still
+  // allow it to be changed by updating the overlay in EEPROM.
+  Layer.getKey = EEPROMKeymap.getKeyOverride;
+
+  // Second, we need to tell the plugin how many keymaps to store in EEPROM.
+  // We'll store three, the same amount we have built-in. It's a good idea to
+  // keep them in sync.
+  EEPROMKeymap.max_layers(3);
+
+  // Lastly, for EEPROM stuff to work, we seal the settings. We hope to make this
+  // part unnecessary in the future, but for now, this step must be present.
+  EEPROMSettings.seal();
+
+  // For the host<->firmware communication, we set up which commands our firmware
+  // supports. The basic ones are `help` and `version`.
+  Focus.addHook(FOCUS_HOOK_HELP);
+  Focus.addHook(FOCUS_HOOK_VERSION);
+  // To be able to edit the keymap, we also need `keymap`.
+  Focus.addHook(FOCUS_HOOK_KEYMAP);
+
+  // As a debugging aid, we should also support the `eeprom` command, which lets us dump or replace the whole of EEPROM.
+  Focus.addHook(FOCUS_HOOK_EEPROM);
+
+  // Kaleidoscope itself provides a few commands too that allow the host to initiate a layer change, for example.
+  Focus.addHook(FOCUS_HOOK_KALEIDOSCOPE);
+
+  // We also wish to be able to control the LEDs through the protocol.
+  Focus.addHook(FOCUS_HOOK_LEDCONTROL);
 }
 
 /** loop is the second of the standard Arduino sketch functions.
